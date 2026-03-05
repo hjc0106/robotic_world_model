@@ -65,7 +65,7 @@ Follow the official installation guide of model-based [RSL RL](https://github.co
 3. **Clone this repository** (outside your Isaac Lab directory)
 
 ```bash
-git clone git@github.com:leggedrobotics/robotic_world_model.git
+git clone --recursive https://github.com/hjc0106/robotic_world_model.git  -b dev-v1
 ```
 
 4. **Install the extension** using the Python environment where Isaac Lab is installed
