@@ -109,8 +109,9 @@ Available options:
 
 ```bash
 python scripts/reinforcement_learning/rsl_rl/train.py \
-  --task Template-Isaac-Velocity-Flat-Anymal-D-Pretrain-v0 \
-  --headless
+  --task Template-Isaac-Velocity-Flat-Anymal-D-RWMP-Pretrain-v0 \
+  --headless \
+  --enable_cameras
 ```
 
 It trains a PPO policy from scratch, while the induced experience during training is used to train the dynamics model.
