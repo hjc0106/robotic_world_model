@@ -6,6 +6,17 @@ from . import agents
 # Register Gym environments.
 ##
 
+# wmp+rwm
+gym.register(
+    id="Template-Isaac-Velocity-Flat-Anymal-D-RWMP-Pretrain-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.wm_flat_env_cfg:WMAnymalDFlatEnvCfg_PRETRAIN",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_rwmp_ppo_cfg:AnymalDFlatRWMPPPOPretrainRunnerCfg",
+    },
+)
+
 gym.register(
     id="Template-Isaac-Velocity-Flat-Anymal-D-Init-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",

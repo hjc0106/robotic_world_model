@@ -74,7 +74,7 @@ import os
 import torch
 from datetime import datetime
 
-from rsl_rl.runners import OnPolicyRunner, MBPOOnPolicyRunner
+from rsl_rl.runners import OnPolicyRunner, MBPOOnPolicyRunner, RWMPOnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -172,6 +172,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     elif agent_cfg.class_name == "MBPOOnPolicyRunner":
         agent_cfg.system_dynamics_load_path = args_cli.system_dynamics_load_path if args_cli.system_dynamics_load_path is not None else agent_cfg.system_dynamics_load_path
         runner = MBPOOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    elif agent_cfg.class_name == "RWMPOnPolicyRunner":
+        agent_cfg.system_dynamics_load_path = args_cli.system_dynamics_load_path if args_cli.system_dynamics_load_path is not None else agent_cfg.system_dynamics_load_path
+        runner = RWMPOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     # write git state to logs
