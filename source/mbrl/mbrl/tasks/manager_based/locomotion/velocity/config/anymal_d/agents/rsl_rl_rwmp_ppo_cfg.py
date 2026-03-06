@@ -46,7 +46,7 @@ class AnymalDFlatRWMPPPOPretrainRunnerCfg(AnymalDFlatPPORunnerCfg):
             "wm_feature_dim": 512,
         },
         "world_model": {
-            "train_start_steps": 1000,
+            "train_start_steps": 50,
             "train_steps_per_iter": 10,
             "batch_size": 16,
             "batch_length": 64,
@@ -276,7 +276,7 @@ class AnymalDFlatRWMPPPOPretrainRunnerCfg(AnymalDFlatPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        self.max_iterations = 100000
+        self.max_iterations = 2000
         self.experiment_name = "anymal_d_flat_rwmp"
         self.policy.actor_hidden_dims = [256, 128, 64]
         self.policy.critic_hidden_dims = [512, 256, 128]
