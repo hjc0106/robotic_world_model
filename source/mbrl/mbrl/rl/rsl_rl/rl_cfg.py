@@ -318,3 +318,59 @@ class RslRlRwmpPpoAlgorithmCfg:
     
     system_dynamics_eval_traj_noise_scale: list[float] = MISSING
     """The noise scale for the evaluation trajectory for the system dynamics."""
+
+@configclass
+class RslRlAmpPpoAlgorithmCfg:
+    """Configuration for the AMPPPO algorithm."""
+
+    class_name: str = "AMPPPO"
+    """The algorithm class name. Default is AMPPPO."""
+
+    num_learning_epochs: int = MISSING
+    """The number of learning epochs per update."""
+
+    num_mini_batches: int = MISSING
+    """The number of mini-batches per update."""
+
+    learning_rate: float = MISSING
+    """The learning rate for the policy."""
+
+    schedule: str = MISSING
+    """The learning rate schedule."""
+
+    gamma: float = MISSING
+    """The discount factor."""
+
+    lam: float = MISSING
+    """The lambda parameter for Generalized Advantage Estimation (GAE)."""
+
+    entropy_coef: float = MISSING
+    """The coefficient for the entropy loss."""
+
+    desired_kl: float = MISSING
+    """The desired KL divergence."""
+
+    max_grad_norm: float = MISSING
+    """The maximum gradient norm."""
+
+    value_loss_coef: float = MISSING
+    """The coefficient for the value loss."""
+
+    use_clipped_value_loss: bool = MISSING
+    """Whether to use clipped value loss."""
+
+    clip_param: float = MISSING
+    """The clipping parameter for the policy."""
+
+    normalize_advantage_per_mini_batch: bool = False
+    """Whether to normalize the advantage per mini-batch. Default is False.
+
+    If True, the advantage is normalized over the mini-batches only.
+    Otherwise, the advantage is normalized over the entire collected trajectories.
+    """
+
+    rnd_cfg: RslRlRndCfg | None = None
+    """The RND configuration. Default is None, in which case RND is not used."""
+
+    symmetry_cfg: RslRlSymmetryCfg | None = None
+    """The symmetry configuration. Default is None, in which case symmetry is not used."""
