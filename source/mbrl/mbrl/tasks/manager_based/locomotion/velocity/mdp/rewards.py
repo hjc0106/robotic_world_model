@@ -702,3 +702,73 @@ def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scen
     reward = torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
+
+def joint_collision(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Penalize joint collision."""
+    # extract the used quantities (to enable type-hinting)
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    reward = torch.sum(1.0*(torch.norm(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids], dim=-1) > 0.1), dim=1)
+    return reward
+
+
+def stuck(env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize the robot for getting stuck."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    reward = (torch.abs(asset.data.root_lin_vel_b[:, 0]) < 0.1) * \
+        (torch.abs(env.command_manager.get_command(command_name)[:, 0]) > 0.1)
+
+    return reward
+
+def cheat(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize the robot for getting cheated."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    def quat_apply(a, b):
+        shape = b.shape
+        a = a.reshape(-1, 4)
+        b = b.reshape(-1, 3)
+        xyz = a[:, :3]
+        t = xyz.cross(b, dim=-1) * 2
+        return (b + a[:, 3:] * t + xyz.cross(t, dim=-1)).view(shape)
+
+    forward_w = quat_apply(asset.data.root_quat_w, env.scene.env_origins.new_tensor([1.0, 0.0, 0.0]).repeat(env.num_envs, 1))
+    heading = torch.atan2(forward_w[:, 1], forward_w[:, 0])
+    reward = (heading.abs() > 1.0).to(dtype=heading.dtype)
+    return reward
+
+
+def feet_edge(
+    env: ManagerBasedRLEnv,
+    edge_mask: torch.Tensor,          # bool [H, W]，预先放到 device
+    horizontal_scale: float,          # meters per cell
+    border_size: float,               # meters
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize feet contacts near terrain edges (heightfield edge mask)."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    terrian_cfg = env.scene.terrain.cfg.terrain_generator
+    border_size = terrian_cfg.border_width
+    horizontal_scale = terrian_cfg.horizontal_scale
+    num_envs = env.num_envs
+
+    # 1) feet xy in world
+    feet_xy_w = asset.data.body_state_w[:, asset_cfg.body_ids, :2]  # [N, F, 2]
+
+    # 2) world -> grid index (match your LeggedGym mapping)
+    feet_xy_grid = ((feet_xy_w + border_size) / horizontal_scale).round().to(torch.long)  # [N, F, 2]
+    feet_xy_grid[..., 0] = feet_xy_grid[..., 0].clamp(0, edge_mask.shape[0] - 1)
+    feet_xy_grid[..., 1] = feet_xy_grid[..., 1].clamp(0, edge_mask.shape[1] - 1)
+
+    # 3) query edge mask
+    feet_at_edge = edge_mask[feet_xy_grid[..., 0], feet_xy_grid[..., 1]]  # bool [N, F]
+
+    # 4) contact filter (你需要自己提供/计算 contact_filt: bool [N, F])
+    # contact_filt = ...  # e.g., from contact sensor or net contact forces
+    feet_edge_contact = feet_at_edge
+
+    # 5) aggregate per-env
+    reward = feet_edge_contact.to(torch.float32).sum(dim=-1)  # [N]
+    return reward

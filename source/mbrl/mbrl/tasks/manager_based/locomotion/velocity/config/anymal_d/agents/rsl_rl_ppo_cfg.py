@@ -106,6 +106,26 @@ class AnymalDFlatPPOPretrainRunnerCfg(AnymalDFlatPPORunnerCfg):
         super().__post_init__()
 
         self.max_iterations = 2000
+        # rssm
+        self.system_dynamics.architecture_config = {
+            "type": "rssm",
+            "stoch": 45,
+            "deter": 256,
+            "hidden": 256,
+            "rec_depth": 1,
+            "discrete": False,
+            "act": 'SiLU',
+            "norm": True,
+            "mean_act": 'none',
+            "std_act": 'softplus',
+            # for head
+            "state_mean_shape": [128],
+            "state_logstd_shape": [128],
+            # for auxiliary
+            "extension_shape": [128],
+            "contact_shape": [128],
+            "termination_shape": [128],
+        }
 
 @configclass
 class AnymalDFlatPPOFinetuneRunnerCfg(AnymalDFlatPPOPretrainRunnerCfg):
