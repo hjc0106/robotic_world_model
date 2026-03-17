@@ -50,7 +50,8 @@ from isaaclab.utils import configclass
 ##
 # Pre-defined configs
 ##
-from isaaclab_assets.robots.anymal import ANYMAL_C_CFG, ANYMAL_D_CFG  # isort: skip
+from mbrl.assets.unitree import UNITREE_A1_CFG  # isort: skip
+
 
 
 @configclass
@@ -66,51 +67,33 @@ class SensorsSceneCfg(InteractiveSceneCfg):
     )
 
     # robot
-    robot: ArticulationCfg = ANYMAL_D_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = UNITREE_A1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
     # sensors
-    # depth scanner
     camera = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base/front_cam",
         update_period=0.1,
         height=64,
         width=64,
-        data_types=["distance_to_image_plane"],
+        data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
         offset=CameraCfg.OffsetCfg(pos=(0.510, 0.0, 0.015), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
     )
-    # foot height
-    foot_height_scanner = RayCasterCfg(
+    height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
+        update_period=0.02,
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
-        debug_vis=False,
-        mesh_prim_paths=["/World/defaultGroundPlane"],
-    )  
-    # forward height
-    forward_height_scanner = RayCasterCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base",
-        offset=RayCasterCfg.OffsetCfg(pos=(1.2, 0.0, 20.0)),
-        ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[2.4, 2.0]),
-        debug_vis=False,
+        debug_vis=True,
         mesh_prim_paths=["/World/defaultGroundPlane"],
     )
     contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*_FOOT", update_period=0.0, history_length=6, debug_vis=True
+        prim_path="{ENV_REGEX_NS}/Robot/.*", update_period=0.0, history_length=6, debug_vis=True
     )
 
-def process_depth_image(self, depth_image, env_id):
-    # These operations are replicated on the hardware
-    # depth_image = self.crop_depth_image(depth_image)
-    depth_image = torch.clip(depth_image, -2.0, -0.0)
-    # depth_image = self.resize_transform(depth_image[None, :]).squeeze()
-    depth_image = depth_image * -1
-    depth_image = (depth_image - self.cfg.depth.near_clip) / (self.cfg.depth.far_clip - self.cfg.depth.near_clip)  - 0.5
-    return depth_image
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Run the simulator."""
@@ -157,23 +140,16 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         count += 1
         # update buffers
         scene.update(sim_dt)
-        depth_image = scene["camera"].data.output["distance_to_image_plane"]
-        depth_image = depth_image[depth_image == float("inf")] = 0
+
         # print information from the sensors
         print("-------------------------------")
-        # print(scene["camera"])
+        print(scene["camera"])
         # print("Received shape of rgb   image: ", scene["camera"].data.output["rgb"].shape)
-        print("Received shape of depth image: ", depth_image.shape)
-        print("Received max depth value: ", depth_image.max())
-        print("Received min depth value: ", depth_image.min())
-        print("Received mean depth value: ", depth_image.mean())
-
-        # print("-------------------------------")
-        # print(scene["foot_height_scanner"])
-        # print("Received max height value: ", (scene["foot_height_scanner"].data.pos_w[:, 2].unsqueeze(1) - scene["foot_height_scanner"].data.ray_hits_w[..., 2]).shape)
-        # print("-------------------------------")
-        # print(scene["forward_height_scanner"])
-        # print("Received max height value: ", torch.max(scene["forward_height_scanner"].data.ray_hits_w[..., -1]).item())
+        print("Received shape of depth image: ", scene["camera"].data.output["distance_to_image_plane"].shape)
+        print(type(scene["camera"].data.output["distance_to_image_plane"]))
+        print("-------------------------------")
+        # print(scene["height_scanner"])
+        # print("Received max height value: ", torch.max(scene["height_scanner"].data.ray_hits_w[..., -1]).item())
         # print("-------------------------------")
         # print(scene["contact_forces"])
         # print("Received max contact force of: ", torch.max(scene["contact_forces"].data.net_forces_w).item())

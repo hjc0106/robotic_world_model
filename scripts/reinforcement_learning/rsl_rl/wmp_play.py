@@ -145,21 +145,77 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # obtain the trained policy for inference
     policy = runner.get_inference_policy(device=env.unwrapped.device)
+    obs = env.get_observations()
 
     dt = env.unwrapped.step_dt
+    device = env.unwrapped.device
+    from mbrl.tasks.manager_based.locomotion.velocity.config.a1.agents.rsl_rl_wmp_ppo_cfg import \
+        NUM_OBS, PRIVILEGED_DIM, PROP_DIM, FOOT_HEIGHT_DIM, HISTORY_INTERVAL, UPDATE_INTERVAL
+    trajectory_history = torch.zeros(size=(env.num_envs, HISTORY_INTERVAL, NUM_OBS -
+                                           PRIVILEGED_DIM - FOOT_HEIGHT_DIM - 3), device = device)
+    obs_without_command = torch.concat((obs["policy"][:, PRIVILEGED_DIM:PRIVILEGED_DIM + 6],
+                                        obs["policy"][:, PRIVILEGED_DIM + 9:-FOOT_HEIGHT_DIM]), dim=1)
+    trajectory_history = torch.concat((trajectory_history[:, 1:], obs_without_command.unsqueeze(1)), dim=1)
 
+    world_model = runner._world_model.to(env.device)
+    wm_latent = wm_action = None
+    wm_is_first = torch.ones(env.num_envs, device=device)
+    wm_action_history = torch.zeros(size=(env.num_envs, UPDATE_INTERVAL, env.num_actions),
+                                    device=device)
+    wm_obs = {
+        "prop": obs["policy"][:, PRIVILEGED_DIM: PRIVILEGED_DIM + PROP_DIM],
+        "is_first": wm_is_first,
+        "image": obs["camera"],
+    }
+
+    wm_feature = torch.zeros((env.num_envs, runner.base_cfg["env"]["wm_feature_dim"]), device=device)
+   
+    total_reward = 0
+    not_dones = torch.ones((env.num_envs,), device=device)
     # reset environment
-    obs = env.get_observations()
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
         # run everything in inference mode
         with torch.inference_mode():
+            if ((env.unwrapped.common_step_counter + 1) % UPDATE_INTERVAL == 0):
+                wm_embed = world_model.encoder(wm_obs)
+                wm_latent, _ = world_model.dynamics.obs_step(wm_latent, wm_action, wm_embed, wm_obs["is_first"], sample=True)
+                wm_feature = world_model.dynamics.get_deter_feat(wm_latent)
+                wm_is_first[:] = 0
+
             # agent stepping
-            actions = policy(obs)
+            history = trajectory_history.flatten(1).to(device)
+            actions = policy(obs, history, wm_feature)
             # env stepping
-            obs, _, _, _ = env.step(actions)
+            obs, rewards, dones, extras = env.step(actions)
+
+            not_dones *= (~dones)
+            total_reward += torch.mean(rewards * not_dones)
+
+            wm_action_history = torch.concat(
+                (wm_action_history[:, 1:], actions.unsqueeze(1)), dim=1)
+            wm_obs = {
+                "prop": obs["policy"][:, PRIVILEGED_DIM: PRIVILEGED_DIM + PROP_DIM],
+                "is_first": wm_is_first,
+                "image": obs["camera"],
+            }
+            reset_env_ids = dones.nonzero(as_tuple=False).squeeze(-1).cpu().numpy()
+            if (len(reset_env_ids) > 0):
+                wm_action_history[reset_env_ids, :] = 0
+                wm_is_first[reset_env_ids] = 1
+
+            wm_action = wm_action_history.flatten(1)
+
+            trajectory_history[reset_env_ids] = 0
+            obs_without_command = torch.concat((obs["policy"][:, PRIVILEGED_DIM:PRIVILEGED_DIM + 6],
+                                                obs["policy"][:, PRIVILEGED_DIM + 9:-FOOT_HEIGHT_DIM]),
+                                            dim=1)
+            trajectory_history = torch.concat(
+                (trajectory_history[:, 1:], obs_without_command.unsqueeze(1)), dim=1)
+
+
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -173,6 +229,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # close the simulator
     env.close()
+    print('total reward:', total_reward)
 
 
 if __name__ == "__main__":

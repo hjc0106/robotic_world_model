@@ -28,6 +28,14 @@ parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--system_dynamics_load_path", type=str, default=None, help="Dynamics model load path.")
+parser.add_argument(
+    "--load_path",
+    type=str,
+    default=None,
+    help="Path to a pretrained model checkpoint (.pt file) to load before training. "
+         "Unlike --resume, this does not require the checkpoint to be in the current "
+         "experiment log directory and always starts a fresh training run.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -188,6 +196,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path, load_optimizer=False)
+    elif args_cli.load_path is not None:
+        print(f"[INFO]: Loading pretrained weights from: {args_cli.load_path}")
+        runner.load(args_cli.load_path, load_optimizer=False)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
