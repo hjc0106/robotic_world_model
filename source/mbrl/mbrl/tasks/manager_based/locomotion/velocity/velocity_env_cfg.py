@@ -32,6 +32,7 @@ import mbrl.tasks.manager_based.locomotion.velocity.mdp as mdp
 # Pre-defined configs
 ##
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG  # isort: skip
+# from mbrl.terrains.config.rough import ROUGH_TERRAINS_CFG
 
 
 ##
@@ -589,6 +590,15 @@ class RewardsCfg:
         },
     )
 
+    feet_stumble_on_gap = RewTerm(
+        func=mdp.feet_stumble_on_gap,
+        weight=0.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+            "terrain_name": "gap",
+        },
+    )
+
     feet_slide = RewTerm(
         func=mdp.feet_slide,
         weight=0.0,
@@ -640,8 +650,31 @@ class RewardsCfg:
     #         "stance_width": float,
     #     },
     # )
-
     upward = RewTerm(func=mdp.upward, weight=0.0)
+
+    collision = RewTerm(
+        func=mdp.joint_collision,
+        weight=0.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=""),
+        },
+    )
+
+    stuck = RewTerm(
+        func=mdp.stuck,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
+    cheat = RewTerm(
+        func=mdp.cheat,
+        weight=0.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
 
 
 @configclass
@@ -686,6 +719,11 @@ class CurriculumCfg:
         },
     )
 
+    # Placeholder for per-reward-term weight ramp curriculum.
+    # Set to a CurrTerm(func=mdp.reward_weight_linear_ramp, params={...}) in
+    # subclass __post_init__ to enable WMP-style reward weight scheduling.
+    feet_stumble_on_gap_ramp: CurrTerm | None = None
+
 
 ##
 # Environment configuration
@@ -718,6 +756,8 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
         self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        # --------------------------------Logging--------------------------------
+        # self.sim.log_dir = "/home/hongjiacheng/isaac_logs"
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         if self.scene.height_scanner is not None:

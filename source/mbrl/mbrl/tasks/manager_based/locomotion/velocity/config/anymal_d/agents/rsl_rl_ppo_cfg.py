@@ -106,6 +106,26 @@ class AnymalDFlatPPOPretrainRunnerCfg(AnymalDFlatPPORunnerCfg):
         super().__post_init__()
 
         self.max_iterations = 2000
+        # rssm
+        self.system_dynamics.architecture_config = {
+            "type": "rssm",
+            "stoch": 45,
+            "deter": 256,
+            "hidden": 256,
+            "rec_depth": 1,
+            "discrete": False,
+            "act": 'SiLU',
+            "norm": True,
+            "mean_act": 'none',
+            "std_act": 'softplus',
+            # for head
+            "state_mean_shape": [128],
+            "state_logstd_shape": [128],
+            # for auxiliary
+            "extension_shape": [128],
+            "contact_shape": [128],
+            "termination_shape": [128],
+        }
 
 @configclass
 class AnymalDFlatPPOFinetuneRunnerCfg(AnymalDFlatPPOPretrainRunnerCfg):
@@ -113,7 +133,7 @@ class AnymalDFlatPPOFinetuneRunnerCfg(AnymalDFlatPPOPretrainRunnerCfg):
     load_run = "2025-11-04_09-59-00"
     load_system_dynamics = True
     system_dynamics_load_path = "logs/rsl_rl/anymal_d_flat/2025-11-04_14-31-20_pretrain_rnn/model_5000.pt"
-    system_dynamics_warmup_iterations = 500
+    system_dynamics_warmup_iterations = 5
     run_name = "finetune"
     def __post_init__(self):
         # post init of parent

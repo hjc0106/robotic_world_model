@@ -302,8 +302,8 @@ def processed_image(
             mean_tensor = torch.mean(images, dim=(1, 2), keepdim=True)
             images -= mean_tensor
         elif "distance_to" in data_type or "depth" in data_type:
-            images = torch.clamp(images, max=-near_clip, min=-far_clip)
-            images = images * -1
+            images[images == float("inf")] = far_clip
+            images = torch.clamp(images, min=near_clip, max=far_clip)
             images = (images - near_clip) / (far_clip - near_clip) - 0.5
         elif "normals" in data_type:
             images = (images + 1.0) * 0.5

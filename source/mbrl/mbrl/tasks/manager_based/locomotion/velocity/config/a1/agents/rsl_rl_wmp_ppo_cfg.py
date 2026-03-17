@@ -64,7 +64,7 @@ class UnitreeA1RoughWMPPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         max_grad_norm=1.0,
     )
     amp = {
-        "num_preload_transition": 20000,
+        "num_preload_transition": 2000000,
         "observation_dim": 43,
         "reward_coef": 0.5 * 0.02,
         "discr_hidden_dims": [1024, 512],
@@ -80,6 +80,10 @@ class UnitreeA1RoughWMPPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     }
     base = {
         "env": {
+            "camera_sampler": "None",
+            "camera_sampler_params": {
+                "camera_num_envs": 512,
+            },
             "update_interval": UPDATE_INTERVAL,
             "num_actions": ACTION_DIM,
             "prop_dim": PROP_DIM,

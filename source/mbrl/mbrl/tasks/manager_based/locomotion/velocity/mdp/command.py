@@ -22,8 +22,10 @@ if TYPE_CHECKING:
 class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
     """Command generator that generates a velocity command in SE(2) from uniform distribution with threshold.
 
-    This command generator automatically detects "pits" terrain and applies restrictions:
-    - For pit terrains: only allow forward movement (no lateral or rotational movement)
+    Applies forward-only command restrictions for constrained terrain types:
+    - "gap" terrain: robot must cross the gap straight; lateral/yaw commands are zeroed.
+    - "tilt" terrain: robot must traverse the narrow corridor straight; lateral/yaw commands
+      are zeroed to prevent it from colliding with the side walls.
     """
 
     cfg: mdp.UniformThresholdVelocityCommandCfg  # type: ignore
@@ -37,8 +39,8 @@ class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
             env: The environment.
         """
         super().__init__(cfg, env)
-        # Track which robots were on pit terrain in the previous step
-        self.was_on_pit = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # Track which robots were on a constrained terrain in the previous step
+        self.was_on_constrained = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
     def _resample_command(self, env_ids: Sequence[int]):
         """Resample velocity commands with threshold."""
@@ -51,38 +53,38 @@ class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
 
         This function:
         1. Calls parent's update to handle heading and standing envs
-        2. Checks which robots are currently on pit terrain
-        3. For robots leaving pits: resamples their commands
-        4. For robots on pits: restricts to forward-only movement and sets heading to 0
+        2. Checks which robots are on constrained terrain (gap or tilt)
+        3. For robots leaving constrained terrain: resamples their commands
+        4. For robots on constrained terrain: restricts to forward-only movement and sets heading to 0
         """
         # First, call parent's update command
         super()._update_command()
 
-        # Check which robots are currently on pit terrain (real-time check every step)
-        on_pits = is_robot_on_terrain(self._env, "pits")
+        # Constrained terrains: gap (void on all sides) and tilt (narrow corridor)
+        on_constrained = (
+            is_robot_on_terrain(self._env, "gap") | is_robot_on_terrain(self._env, "tilt")
+        )
 
-        # Find robots that just left pit terrain (need to resample)
-        left_pit_mask = self.was_on_pit & ~on_pits
-        if left_pit_mask.any():
-            left_pit_env_ids = torch.where(left_pit_mask)[0]
-            # Resample commands for robots that left pits
-            self._resample_command(left_pit_env_ids)
+        # Resample commands for robots that just left a constrained terrain
+        left_constrained_mask = self.was_on_constrained & ~on_constrained
+        if left_constrained_mask.any():
+            left_env_ids = torch.where(left_constrained_mask)[0]
+            self._resample_command(left_env_ids)
 
-        # For robots currently on pits: restrict to forward-only movement with min/max speed
-        if on_pits.any():
-            pit_env_ids = torch.where(on_pits)[0]
+        # For robots currently on constrained terrain: restrict to forward-only movement
+        if on_constrained.any():
+            constrained_env_ids = torch.where(on_constrained)[0]
             # Force forward-only movement with min and max speed limits
-            self.vel_command_b[pit_env_ids, 0] = torch.clamp(
-                torch.abs(self.vel_command_b[pit_env_ids, 0]), min=0.3, max=0.6
+            self.vel_command_b[constrained_env_ids, 0] = torch.clamp(
+                torch.abs(self.vel_command_b[constrained_env_ids, 0]), min=0.3, max=0.6
             )
-            self.vel_command_b[pit_env_ids, 1] = 0.0  # no lateral movement
-            self.vel_command_b[pit_env_ids, 2] = 0.0  # no yaw rotation
-            # Set heading to 0 for pit robots
+            self.vel_command_b[constrained_env_ids, 1] = 0.0  # no lateral movement
+            self.vel_command_b[constrained_env_ids, 2] = 0.0  # no yaw rotation
             if self.cfg.heading_command:
-                self.heading_target[pit_env_ids] = 0.0
+                self.heading_target[constrained_env_ids] = 0.0
 
         # Update tracking state
-        self.was_on_pit = on_pits
+        self.was_on_constrained = on_constrained
 
 
 @configclass

@@ -222,19 +222,19 @@ def reset_root_state_uniform(
     dictionary are ``x``, ``y``, ``z``, ``roll``, ``pitch``, and ``yaw``. The values are tuples of the form
     ``(min, max)``. If the dictionary does not contain a key, the position or velocity is set to zero for that axis.
 
-    Note: If "pits" terrain exists, environments on pit terrain will be reset to default state without random
-    perturbations to avoid the robot falling into the pit.
+    Note: If "gap" or "tilt" terrain exists, environments on those terrains will be reset to default state
+    without random perturbations.  For "gap" terrain this prevents the robot from spawning in the void; for
+    "tilt" terrain it ensures the robot starts centred inside the narrow corridor.
     """
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject | Articulation = env.scene[asset_cfg.name]
 
-    # Separate pit and non-pit environments
-    # Check which environments are assigned to pit terrain (not random reset)
-    assigned_to_pits = is_env_assigned_to_terrain(env, "pits")
-    pit_env_ids = env_ids[assigned_to_pits[env_ids]]
-    non_pit_env_ids = env_ids[~assigned_to_pits[env_ids]]
+    # Constrained terrains: gap (no spawning in the void) and tilt (must stay centred in corridor)
+    assigned_to_constrained = is_env_assigned_to_terrain(env, "gap") | is_env_assigned_to_terrain(env, "tilt")
+    pit_env_ids = env_ids[assigned_to_constrained[env_ids]]
+    non_pit_env_ids = env_ids[~assigned_to_constrained[env_ids]]
 
-    # Reset pit environments to default state (no random perturbations)
+    # Reset constrained terrain environments to default state (no random perturbations)
     if len(pit_env_ids) > 0:
         root_states = asset.data.default_root_state[pit_env_ids].clone()
         positions = root_states[:, 0:3] + env.scene.env_origins[pit_env_ids]

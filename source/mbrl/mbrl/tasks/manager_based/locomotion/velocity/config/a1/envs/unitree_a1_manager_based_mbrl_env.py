@@ -152,6 +152,19 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
         
         return torch.cat((joint_pos, foot_pos_local, base_lin_vel, base_ang_vel, joint_vel, z_pos), dim=-1)
 
+    def step(self, action: torch.Tensor):
+        """Execute one time-step, then clip total reward to >= 0.
+
+        Mirrors WMP's ``only_positive_rewards = True``: the summed reward is
+        clipped at zero each step to prevent large negative spikes from
+        destabilising early training.  The termination reward (when used) is
+        excluded from this clipping, consistent with WMP's implementation.
+        """
+        obs_buf, reward_buf, reset_terminated, reset_time_outs, extras = super().step(action)
+        reward_buf = torch.clamp(reward_buf, min=0.0)
+        self.reward_buf = reward_buf
+        return obs_buf, reward_buf, reset_terminated, reset_time_outs, extras
+
     """
     Helper functions.
     """
@@ -167,12 +180,9 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
         self.curriculum_manager.compute(env_ids=env_ids)
         # reset the internal buffers of the scene elements
         self.scene.reset(env_ids)
-        # apply events such as randomizations for environments that need a reset
-        if "reset" in self.event_manager.available_modes:
-            env_step_count = self._sim_step_counter // self.cfg.decimation
-            self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=env_step_count)
 
-        # setup for amp
+        # Step 1: AMP strategy sets the base pose/velocity first.
+        # This establishes a stable default state before terrain-aware events override it.
         if self.cfg.reset_strategy == "default":
             root_state, joint_pos, joint_vel = self._reset_strategy_default(env_ids)
         elif self.cfg.reset_strategy.startswith("random"):
@@ -184,6 +194,13 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
         self.robot.write_root_link_pose_to_sim(root_state[:, :7], env_ids)
         self.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+
+        # Step 2: Apply events AFTER writing the base pose so that terrain-aware
+        # overrides (e.g. reset_root_state_uniform zeroing out gap/tilt perturbations,
+        # and adding small XY jitter for other terrains) take effect.
+        if "reset" in self.event_manager.available_modes:
+            env_step_count = self._sim_step_counter // self.cfg.decimation
+            self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=env_step_count)
 
         # iterate over all managers and reset them
         # this returns a dictionary of information which is stored in the extras

@@ -48,7 +48,7 @@ def is_env_assigned_to_terrain(env: ManagerBasedEnv, terrain_name: str) -> torch
 
     Args:
         env: The environment instance.
-        terrain_name: Name of the terrain to check (e.g., "pits", "stairs").
+        terrain_name: Name of the terrain to check (e.g., "gap", "stairs").
 
     Returns:
         Boolean tensor of shape (num_envs,) where True means the environment is assigned to this terrain.
@@ -78,7 +78,7 @@ def is_robot_on_terrain(env: ManagerBasedEnv, terrain_name: str, asset_name: str
 
     Args:
         env: The environment instance.
-        terrain_name: Name of the terrain to check (e.g., "pits", "stairs").
+        terrain_name: Name of the terrain to check (e.g., "gap", "stairs").
         asset_name: Name of the robot asset. Defaults to "robot".
 
     Returns:

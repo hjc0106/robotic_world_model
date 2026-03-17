@@ -153,7 +153,11 @@ class UnitreeA1FlatEnvCfg_AMP_PLAY(UnitreeA1FlatEnvCfg_AMP):
         # remove random pushing event
         self.events.base_external_force_torque = None
         self.events.push_robot = None
-
+        # command
+        self.commands.base_velocity.ranges.lin_vel_x = (0.6, 0.6)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.0, -0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.0, 0.0)
+        self.commands.base_velocity.ranges.heading = (0.0, 0.0)
         # If the weight of rewards is 0, set rewards to None
         if self.__class__.__name__ == "UnitreeA1FlatEnvCfg_AMP_PLAY":
             self.disable_zero_weight_rewards()

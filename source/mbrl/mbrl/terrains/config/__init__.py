@@ -1,0 +1,1 @@
+from .rough import ROUGH_TERRAINS_CFG
