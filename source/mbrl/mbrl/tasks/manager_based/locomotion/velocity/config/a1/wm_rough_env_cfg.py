@@ -395,6 +395,16 @@ class UnitreeA1RoughEnvCfg_WMP(LocomotionVelocityRoughEnvCfg):
         self.rewards.cheat.weight = -1.0 # multify
         # Exclude rough-flat terrain from cheat penalty (matches WMP: applied only to non-flat terrains)
         self.rewards.cheat.params["excluded_terrain"] = "random_rough"
+        # ------------------------------Commands------------------------------
+        # WMP trains forward-only locomotion on rough terrain: robots go straight
+        # across obstacles rather than navigating around them.  Using wide
+        # omnidirectional ranges would unfairly trigger the cheat/stuck penalties
+        # (designed for forward motion) and makes tracking harder at sigma=0.15.
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.8)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.heading = (0.0, 0.0)
+
         # ------------------------------Terminations------------------------------
         # self.terminations.illegal_contact.params["sensor_cfg"].body_names = [self.base_link_name]
         self.terminations.illegal_contact = None
