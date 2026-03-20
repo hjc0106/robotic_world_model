@@ -246,8 +246,15 @@ class UnitreeA1RoughEnvCfg_WMP(LocomotionVelocityRoughEnvCfg):
     # override observation terms
     observations: ObservationsCfg_WMP = ObservationsCfg_WMP()
 
+    # Number of environments equipped with a depth camera.
+    # Tilt and crawl terrain envs are always included; the remainder is sampled
+    # randomly from the other terrain types (mirrors WMP's cfg.depth.camera_num_envs).
+    depth_camera_num_envs: int = 512
+
     base_link_name = "base"
     foot_link_name = ".*_foot"
+    front_foot_link_name = "F[LR]_foot"
+    rear_foot_link_name = "R[LR]_foot"
     # fmt: off
     joint_names = [
         "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
@@ -339,9 +346,9 @@ class UnitreeA1RoughEnvCfg_WMP(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_pos_limits.weight = 0
         self.rewards.joint_vel_limits.weight = 0
         self.rewards.joint_power.weight = -2e-5
-        self.rewards.stand_still.weight = -2.0
-        self.rewards.joint_pos_penalty.weight = -1.0
-        self.rewards.joint_mirror.weight = -0.05
+        self.rewards.stand_still.weight = -0.5  # -2.0
+        self.rewards.joint_pos_penalty.weight = -0.4
+        self.rewards.joint_mirror.weight = -0.5 # -0.05
         self.rewards.joint_mirror.params["mirror_joints"] = [
             ["FR_(hip|thigh|calf).*", "RL_(hip|thigh|calf).*"],
             ["FL_(hip|thigh|calf).*", "RR_(hip|thigh|calf).*"],
@@ -357,20 +364,21 @@ class UnitreeA1RoughEnvCfg_WMP(LocomotionVelocityRoughEnvCfg):
         self.rewards.contact_forces.params["sensor_cfg"].body_names = [self.foot_link_name]
 
         # Velocity-tracking rewards
-        self.rewards.track_lin_vel_xy_exp.weight = 1.5  # multify 
+        self.rewards.track_lin_vel_xy_exp.weight = 2.0  # multify 
         self.rewards.track_lin_vel_xy_exp.params["std"] = math.sqrt(0.15)  # multify 
-        self.rewards.track_ang_vel_z_exp.weight = 0.5  # multify 
+        self.rewards.track_ang_vel_z_exp.weight = 1.0  # multify 
         self.rewards.track_ang_vel_z_exp.params["std"] = math.sqrt(0.15)  # multify 
 
         # Others
-        self.rewards.feet_air_time.weight = 0.5  # multify 
-        self.rewards.feet_air_time.params["threshold"] = 0.5  # multify 
+        self.rewards.feet_air_time.weight = 0.8  # multify 
+        self.rewards.feet_air_time.params["threshold"] = 0.3  # multify 
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_contact.weight = 0
         self.rewards.feet_contact.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_contact_without_cmd.weight = 0.1
         self.rewards.feet_contact_without_cmd.params["sensor_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_stumble.weight = -0.1 # multify
+        # Penalize hitting stair risers to force earlier swing-foot lift.
+        self.rewards.feet_stumble.weight = -0.3
         self.rewards.feet_stumble.params["sensor_cfg"].body_names = [self.foot_link_name]
         # Stronger stumble penalty gated to gap terrain (mirrors WMP feet_edge for gap+pit).
         # Starts at -0.1 (matching WMP's initial curriculum coef of 0.1 × -1.0 = -0.1) and
@@ -380,19 +388,20 @@ class UnitreeA1RoughEnvCfg_WMP(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_slide.weight = 0
         self.rewards.feet_slide.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_slide.params["asset_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_height.weight = 0
-        self.rewards.feet_height.params["target_height"] = 0.05
-        self.rewards.feet_height.params["asset_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_height_body.weight = 0
-        self.rewards.feet_height_body.params["target_height"] = -0.2
-        self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
+        # Front-feet proactive clearance to avoid contact-first stepping.
+        self.rewards.feet_height.weight = -0.35
+        self.rewards.feet_height.params["target_height"] = 0.08
+        self.rewards.feet_height.params["asset_cfg"].body_names = [self.front_foot_link_name]
+        self.rewards.feet_height_body.weight = -0.6
+        self.rewards.feet_height_body.params["target_height"] = -0.1
+        self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.rear_foot_link_name]
         self.rewards.feet_gait.weight = 0
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
         self.rewards.upward.weight = 0
-        self.rewards.collision.weight = -1.0 # multify
+        self.rewards.collision.weight = -0.3 # multify
         self.rewards.collision.params["sensor_cfg"].body_names = [".*thigh", ".*calf"]  # multify
         self.rewards.stuck.weight = -1.0 # multify
-        self.rewards.cheat.weight = -1.0 # multify
+        self.rewards.cheat.weight = -5.0 # multify
         # Exclude rough-flat terrain from cheat penalty (matches WMP: applied only to non-flat terrains)
         self.rewards.cheat.params["excluded_terrain"] = "random_rough"
         # ------------------------------Commands------------------------------
@@ -400,7 +409,7 @@ class UnitreeA1RoughEnvCfg_WMP(LocomotionVelocityRoughEnvCfg):
         # across obstacles rather than navigating around them.  Using wide
         # omnidirectional ranges would unfairly trigger the cheat/stuck penalties
         # (designed for forward motion) and makes tracking harder at sigma=0.15.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.8)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 1.2)  # 0.0, 0.8
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
         self.commands.base_velocity.ranges.heading = (0.0, 0.0)
