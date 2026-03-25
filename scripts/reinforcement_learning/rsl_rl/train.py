@@ -36,6 +36,14 @@ parser.add_argument(
          "Unlike --resume, this does not require the checkpoint to be in the current "
          "experiment log directory and always starts a fresh training run.",
 )
+parser.add_argument(
+    "--load_world_model",
+    action=argparse.BooleanOptionalAction,
+    default=None,
+    help="Whether to load world-model weights from the checkpoint. "
+         "Default: True for --resume, False for --load_path (policy-only pretrained load). "
+         "Use --load-world-model with --load_path to also restore old WM weights.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -194,11 +202,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # load the checkpoint
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-        # load previously trained model
-        runner.load(resume_path, load_optimizer=False)
+        load_wm = True if args_cli.load_world_model is None else args_cli.load_world_model
+        if agent_cfg.class_name == "WMPOnPolicyRunner":
+            runner.load(resume_path, load_optimizer=False, load_world_model=load_wm)
+        else:
+            runner.load(resume_path, load_optimizer=False)
     elif args_cli.load_path is not None:
         print(f"[INFO]: Loading pretrained weights from: {args_cli.load_path}")
-        runner.load(args_cli.load_path, load_optimizer=False)
+        load_wm = False if args_cli.load_world_model is None else args_cli.load_world_model
+        if agent_cfg.class_name == "WMPOnPolicyRunner":
+            runner.load(args_cli.load_path, load_optimizer=False, load_world_model=load_wm)
+        else:
+            runner.load(args_cli.load_path, load_optimizer=False)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
