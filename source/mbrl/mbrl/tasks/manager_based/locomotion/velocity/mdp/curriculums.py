@@ -61,6 +61,52 @@ def command_levels_lin_vel(
     return torch.tensor(base_velocity_ranges.lin_vel_x[1], device=env.device)
 
 
+def reward_weight_linear_ramp(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str,
+    initial_weight: float,
+    final_weight: float,
+    start_iter: int,
+    end_iter: int,
+    num_steps_per_env: int = 24,
+) -> torch.Tensor:
+    """Linearly ramp a reward term's weight from initial to final value over training iterations.
+
+    Mirrors WMP's per-term reward curriculum (e.g. ``feet_edge`` weight 0.1 → 1.0
+    over iterations 4000–10000).  The ramp is driven by ``env.common_step_counter``
+    converted to an approximate policy-update iteration count.
+
+    Before ``start_iter`` the weight is held at ``initial_weight``; after
+    ``end_iter`` it is held at ``final_weight``; in between it is linearly
+    interpolated.
+
+    Args:
+        reward_term_name: Name of the reward term to schedule.
+        initial_weight: Weight to apply before ``start_iter``.
+        final_weight: Weight to apply after ``end_iter``.
+        start_iter: Runner iteration at which the ramp begins.
+        end_iter: Runner iteration at which the ramp ends.
+        num_steps_per_env: Env steps per runner iteration (default 24, matching
+            ``UnitreeA1RoughWMPPPORunnerCfg.num_steps_per_env``).
+
+    Returns:
+        Current weight as a scalar tensor (logged by the curriculum manager).
+    """
+    current_iter = env.common_step_counter // num_steps_per_env
+
+    if current_iter < start_iter:
+        weight = initial_weight
+    elif current_iter >= end_iter:
+        weight = final_weight
+    else:
+        progress = (current_iter - start_iter) / max(end_iter - start_iter, 1)
+        weight = initial_weight + progress * (final_weight - initial_weight)
+
+    env.reward_manager.get_term_cfg(reward_term_name).weight = weight
+    return torch.tensor(weight, device=env.device)
+
+
 def command_levels_ang_vel(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],

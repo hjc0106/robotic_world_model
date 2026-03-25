@@ -10,6 +10,9 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.sensors import ContactSensor, RayCaster
 from isaaclab.utils.math import quat_apply_inverse, yaw_quat
+from isaaclab.terrains import TerrainImporter
+
+from .utils import is_env_assigned_to_terrain
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -453,6 +456,38 @@ def feet_stumble(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Te
     return reward
 
 
+def feet_stumble_on_gap(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    terrain_name: str = "gap",
+) -> torch.Tensor:
+    """Penalize feet hitting vertical surfaces, gated to a specific terrain type.
+
+    Mirrors WMP's ``feet_edge`` reward: applies a stronger stumble penalty only for
+    environments assigned to the named terrain (default ``"gap"``).  Useful when the
+    base ``feet_stumble`` term is already active at a low weight for all terrains and
+    a higher-weight penalty is desired specifically on gap terrain where vertical wall
+    contacts indicate the robot is falling into the gap.
+
+    Args:
+        env: The RL environment.
+        sensor_cfg: Contact sensor configuration specifying foot bodies.
+        terrain_name: Name of the terrain type to gate the penalty to (default "gap").
+
+    Returns:
+        Per-environment penalty tensor. Zero for environments not assigned to
+        ``terrain_name``.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces_z = torch.abs(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2])
+    forces_xy = torch.linalg.norm(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :2], dim=2)
+    reward = torch.any(forces_xy > 4 * forces_z, dim=1).float()
+    # gate to the requested terrain type
+    terrain_mask = is_env_assigned_to_terrain(env, terrain_name)
+    reward = reward * terrain_mask.float()
+    return reward
+
+
 def feet_distance_y_exp(
     env: ManagerBasedRLEnv, stance_width: float, std: float, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
@@ -721,9 +756,26 @@ def stuck(env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg =
 
     return reward
 
-def cheat(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    """Penalize the robot for getting cheated."""
-    # extract the used quantities (to enable type-hinting)
+def cheat(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    excluded_terrain: str | None = None,
+) -> torch.Tensor:
+    """Penalize the robot for sidestepping around obstacles (heading outside ±~57°).
+
+    Mirrors WMP's ``cheat`` reward: discourages the robot from turning sideways to
+    avoid traversing an obstacle directly.
+
+    In WMP this was applied only to non-flat terrain environments.  Set
+    ``excluded_terrain="random_rough"`` to replicate that behaviour — environments
+    assigned to the named terrain will receive zero penalty.
+
+    Args:
+        env: The RL environment.
+        asset_cfg: Scene entity for the robot asset.
+        excluded_terrain: Optional terrain name whose environments are exempt from
+            the penalty (e.g. ``"random_rough"`` to skip flat terrain).
+    """
     asset: RigidObject = env.scene[asset_cfg.name]
 
     def quat_apply(a, b):
@@ -734,41 +786,16 @@ def cheat(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("ro
         t = xyz.cross(b, dim=-1) * 2
         return (b + a[:, 3:] * t + xyz.cross(t, dim=-1)).view(shape)
 
-    forward_w = quat_apply(asset.data.root_quat_w, env.scene.env_origins.new_tensor([1.0, 0.0, 0.0]).repeat(env.num_envs, 1))
+    forward_w = quat_apply(
+        asset.data.root_quat_w,
+        env.scene.env_origins.new_tensor([1.0, 0.0, 0.0]).repeat(env.num_envs, 1),
+    )
     heading = torch.atan2(forward_w[:, 1], forward_w[:, 0])
     reward = (heading.abs() > 1.0).to(dtype=heading.dtype)
+
+    if excluded_terrain is not None:
+        excl_mask = is_env_assigned_to_terrain(env, excluded_terrain)
+        reward = reward * (~excl_mask).float()
+
     return reward
 
-
-def feet_edge(
-    env: ManagerBasedRLEnv,
-    edge_mask: torch.Tensor,          # bool [H, W]，预先放到 device
-    horizontal_scale: float,          # meters per cell
-    border_size: float,               # meters
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Penalize feet contacts near terrain edges (heightfield edge mask)."""
-    asset: RigidObject = env.scene[asset_cfg.name]
-    terrian_cfg = env.scene.terrain.cfg.terrain_generator
-    border_size = terrian_cfg.border_width
-    horizontal_scale = terrian_cfg.horizontal_scale
-    num_envs = env.num_envs
-
-    # 1) feet xy in world
-    feet_xy_w = asset.data.body_state_w[:, asset_cfg.body_ids, :2]  # [N, F, 2]
-
-    # 2) world -> grid index (match your LeggedGym mapping)
-    feet_xy_grid = ((feet_xy_w + border_size) / horizontal_scale).round().to(torch.long)  # [N, F, 2]
-    feet_xy_grid[..., 0] = feet_xy_grid[..., 0].clamp(0, edge_mask.shape[0] - 1)
-    feet_xy_grid[..., 1] = feet_xy_grid[..., 1].clamp(0, edge_mask.shape[1] - 1)
-
-    # 3) query edge mask
-    feet_at_edge = edge_mask[feet_xy_grid[..., 0], feet_xy_grid[..., 1]]  # bool [N, F]
-
-    # 4) contact filter (你需要自己提供/计算 contact_filt: bool [N, F])
-    # contact_filt = ...  # e.g., from contact sensor or net contact forces
-    feet_edge_contact = feet_at_edge
-
-    # 5) aggregate per-env
-    reward = feet_edge_contact.to(torch.float32).sum(dim=-1)  # [N]
-    return reward

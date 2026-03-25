@@ -92,6 +92,9 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
             (self.num_envs, self.cfg.amp_observation_space), device=self.device
         )
 
+        # Initialize depth-camera index mappings (mirrors WMP's _create_envs logic).
+        # self._init_depth_indices()
+
     # reset strategies
     def _reset_strategy_default(self, env_ids: Sequence[int]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         robot = self.scene["robot"]
@@ -152,6 +155,19 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
         
         return torch.cat((joint_pos, foot_pos_local, base_lin_vel, base_ang_vel, joint_vel, z_pos), dim=-1)
 
+    def step(self, action: torch.Tensor):
+        """Execute one time-step, then clip total reward to >= 0.
+
+        Mirrors WMP's ``only_positive_rewards = True``: the summed reward is
+        clipped at zero each step to prevent large negative spikes from
+        destabilising early training.  The termination reward (when used) is
+        excluded from this clipping, consistent with WMP's implementation.
+        """
+        obs_buf, reward_buf, reset_terminated, reset_time_outs, extras = super().step(action)
+        reward_buf = torch.clamp(reward_buf, min=0.0)
+        self.reward_buf = reward_buf
+        return obs_buf, reward_buf, reset_terminated, reset_time_outs, extras
+
     """
     Helper functions.
     """
@@ -167,12 +183,9 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
         self.curriculum_manager.compute(env_ids=env_ids)
         # reset the internal buffers of the scene elements
         self.scene.reset(env_ids)
-        # apply events such as randomizations for environments that need a reset
-        if "reset" in self.event_manager.available_modes:
-            env_step_count = self._sim_step_counter // self.cfg.decimation
-            self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=env_step_count)
 
-        # setup for amp
+        # Step 1: AMP strategy sets the base pose/velocity first.
+        # This establishes a stable default state before terrain-aware events override it.
         if self.cfg.reset_strategy == "default":
             root_state, joint_pos, joint_vel = self._reset_strategy_default(env_ids)
         elif self.cfg.reset_strategy.startswith("random"):
@@ -184,6 +197,13 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
         self.robot.write_root_link_pose_to_sim(root_state[:, :7], env_ids)
         self.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+
+        # Step 2: Apply events AFTER writing the base pose so that terrain-aware
+        # overrides (e.g. reset_root_state_uniform zeroing out gap/tilt perturbations,
+        # and adding small XY jitter for other terrains) take effect.
+        if "reset" in self.event_manager.available_modes:
+            env_step_count = self._sim_step_counter // self.cfg.decimation
+            self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=env_step_count)
 
         # iterate over all managers and reset them
         # this returns a dictionary of information which is stored in the extras
@@ -429,3 +449,116 @@ class UnitreeA1ManagerBasedAMPRLEnv(ManagerBasedRLEnv):
 
     def _compute_imagination_reward_terms(self, parsed_imagination_states, rollout_action, parsed_extensions, parsed_contacts):
         raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    # Depth-camera index management  (mirrors WMP LeggedRobot._create_envs)
+    # ------------------------------------------------------------------
+
+    def _init_depth_indices(self) -> None:
+        """Initialise depth_index, depth_index_without_crawl_tilt, and depth_index_inverse.
+
+        Mirrors the WMP project's depth-camera setup in LeggedRobot._create_envs():
+
+        * Tilt and crawl terrain environments always receive a depth camera.
+        * Additional environments are randomly sampled from the remaining ones
+          to reach ``cfg.depth_camera_num_envs`` total cameras.
+        * ``depth_index_inverse[i]`` gives the position of env ``i`` inside
+          ``depth_index``, or ``-1`` when env ``i`` has no camera.
+        """
+        self.camera_num_envs: int = min(
+            int(getattr(self.cfg, "depth_camera_num_envs", self.num_envs)),
+            self.num_envs,
+        )
+
+        tilt_crawl_ids = self._get_tilt_crawl_env_ids()
+        n_tilt_crawl = len(tilt_crawl_ids) if tilt_crawl_ids is not None else 0
+
+        if tilt_crawl_ids is not None and self.camera_num_envs > n_tilt_crawl:
+            # All tilt/crawl envs get a camera; sample the remainder from others.
+            n_other = self.camera_num_envs - n_tilt_crawl
+            all_ids = np.arange(self.num_envs)
+            mask = np.ones(self.num_envs, dtype=bool)
+            mask[tilt_crawl_ids] = False
+            other_ids = all_ids[mask]
+            n_other = min(n_other, len(other_ids))
+            self.depth_index_without_crawl_tilt = np.sort(
+                np.random.choice(other_ids, n_other, replace=False)
+            ).astype(int)
+            self.depth_index = np.concatenate([
+                self.depth_index_without_crawl_tilt,
+                np.sort(tilt_crawl_ids).astype(int),
+            ]).astype(int)
+        else:
+            # Fallback: sequential selection from env 0 upward.
+            self.depth_index_without_crawl_tilt = np.arange(self.camera_num_envs, dtype=int)
+            self.depth_index = self.depth_index_without_crawl_tilt.copy()
+
+        self.depth_index_inverse = -np.ones(self.num_envs, dtype=int)
+        for i, idx in enumerate(self.depth_index):
+            self.depth_index_inverse[int(idx)] = i
+
+    def _get_tilt_crawl_env_ids(self) -> np.ndarray | None:
+        """Return env IDs assigned to tilt or crawl terrain types.
+
+        Tries two strategies in order:
+
+        1. Read ``scene.terrain.terrain_types`` (populated by IsaacLab's
+           TerrainImporter after initialisation) and match against the
+           sub-terrain indices named "tilt" / "crawl" in the generator config.
+        2. Fall back to computing index ranges from the cumulative terrain
+           proportions (same arithmetic WMP uses for its contiguous ranges).
+
+        Returns ``None`` when neither strategy yields any matching envs.
+        """
+        terrain_gen_cfg = getattr(
+            getattr(getattr(self, "cfg", None), "scene", None), "terrain", None
+        )
+        terrain_gen_cfg = getattr(terrain_gen_cfg, "terrain_generator", None)
+
+        # --- Strategy 1: use per-env terrain_type tensor ---
+        terrain_importer = getattr(self.scene, "terrain", None)
+        terrain_types_t: torch.Tensor | None = (
+            getattr(terrain_importer, "terrain_types", None)
+            if terrain_importer is not None
+            else None
+        )
+        if (
+            terrain_types_t is not None
+            and terrain_types_t.numel() == self.num_envs
+            and terrain_gen_cfg is not None
+            and hasattr(terrain_gen_cfg, "sub_terrains")
+        ):
+            names = list(terrain_gen_cfg.sub_terrains.keys())
+            tilt_crawl_type_idx = {
+                i for i, n in enumerate(names) if n in ("tilt", "crawl")
+            }
+            if tilt_crawl_type_idx:
+                types_np = terrain_types_t.cpu().numpy()
+                mask = np.isin(types_np, list(tilt_crawl_type_idx))
+                ids = mask.nonzero()[0]
+                if len(ids) > 0:
+                    return ids
+
+        # --- Strategy 2: proportion-based range (fallback) ---
+        if terrain_gen_cfg is None or not hasattr(terrain_gen_cfg, "sub_terrains"):
+            return None
+
+        cum_prop = 0.0
+        tilt_start_prop: float | None = None
+        crawl_end_prop: float | None = None
+        for name, sub_cfg in terrain_gen_cfg.sub_terrains.items():
+            prop = float(sub_cfg.proportion)
+            if name == "tilt" and tilt_start_prop is None:
+                tilt_start_prop = cum_prop
+            cum_prop += prop
+            if name == "crawl":
+                crawl_end_prop = cum_prop
+
+        if tilt_start_prop is None or crawl_end_prop is None:
+            return None
+
+        tilt_start_idx = round(tilt_start_prop * self.num_envs)
+        crawl_end_idx = round(crawl_end_prop * self.num_envs)
+        if crawl_end_idx <= tilt_start_idx:
+            return None
+        return np.arange(tilt_start_idx, crawl_end_idx)

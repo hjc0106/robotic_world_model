@@ -25,7 +25,7 @@ class UnitreeA1RoughWMPPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     class_name: str = "WMPOnPolicyRunner"
     num_steps_per_env = 24
     max_iterations = 20000
-    save_interval = 100
+    save_interval = 1000
     experiment_name = "unitree_a1_rough_wmp_ppo"
     policy = RslRlPpoActorCriticWmpCfg(
         class_name="ActorCriticWMP",
@@ -64,19 +64,11 @@ class UnitreeA1RoughWMPPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         max_grad_norm=1.0,
     )
     amp = {
-        "num_preload_transition": 20000,
+        "num_preload_transition": 2000000,
         "observation_dim": 43,
         "reward_coef": 0.5 * 0.02,
         "discr_hidden_dims": [1024, 512],
         "task_reward_lerp": 0.3,
-    }
-    depth_predictor = {
-        "lr": 3e-4,
-        "weight_decay": 1e-4,
-        "training_interval": 10,
-        "training_iters": 1000,
-        "batch_size": 1024,
-        "loss_scale": 100,
     }
     base = {
         "env": {

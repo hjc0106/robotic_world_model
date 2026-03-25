@@ -33,8 +33,7 @@ class AnymalDFlatEnvCfg(AnymalDRoughEnvCfg):
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
-        # log
-        self.sim.log_dir = "/home/hongjiacheng/isaac_logs"
+
         # override rewards
         self.rewards.flat_orientation_l2.weight = -5.0
         self.rewards.dof_torques_l2.weight = -2.5e-5
